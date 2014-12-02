@@ -639,8 +639,7 @@ function generateSubdividedIcosahedron(degree)
 		var point0 = icosahedron.nodes[face.n[0]].p;
 		var point1 = icosahedron.nodes[face.n[1]].p;
 		var point2 = icosahedron.nodes[face.n[2]].p;
-		var delta = point1.clone().sub(point0);
-		
+
 		var getEdgeNode0 = (face.n[0] === edge0.n[0])
 			? function(k) { return edge0.subdivided_n[k]; }
 			: function(k) { return edge0.subdivided_n[degree - 2 - k]; };
@@ -867,9 +866,6 @@ function calculateFaceCentroid(pa, pb, pc)
 function distortMesh(mesh, degree, random, action)
 {
 	var totalSurfaceArea = 4 * Math.PI;
-	var idealFaceArea = totalSurfaceArea / mesh.faces.length;
-	var idealEdgeLength = Math.sqrt(idealFaceArea * 4 / Math.sqrt(3));
-	var idealFaceHeight = idealEdgeLength * Math.sqrt(3) / 2;
 
 	var rotationPredicate = function(oldNode0, oldNode1, newNode0, newNode1)
 	{

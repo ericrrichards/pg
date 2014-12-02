@@ -58,14 +58,129 @@ namespace PlanetGeneration {
 
         private object GeneratePlanetMesh(int subdivisions, int distortionLevel, Random random) {
             var mesh = GenerateSubdividedIcosahedron(subdivisions);
+            Console.WriteLine("Generating subdivided icosahedron");
+
+            var totalDistortion = mesh.Edges.Count * distortionLevel;
+            var remainingIterations = 6;
+            while (remainingIterations > 0) {
+                var iterationDistortion = totalDistortion / remainingIterations;
+                totalDistortion -= iterationDistortion;
+                DistortMesh(mesh, iterationDistortion, random);
+                RelaxMesh(mesh, 0.5);
+                --remainingIterations;
+            }
 
             return false;
         }
 
-        private object GenerateSubdividedIcosahedron(int degree) {
+        private bool DistortMesh(Mesh mesh, int degree, Random random) {
+            var i = 0;
+            while (true) {
+                if (i >= degree) {
+                    break;
+                }
+                var consecutiveFailedAttempts = 0;
+                var edgeIndex = random.Next(0, mesh.Edges.Count);
+                while (!ConditionalRotateEdge(mesh, edgeIndex, RotationPredicate)) {
+                    if (++consecutiveFailedAttempts >= mesh.Edges.Count) {
+                        return false;
+                    }
+                    edgeIndex = (edgeIndex + 1) % mesh.Edges.Count;
+                }
+                ++i;
+            }
+            return true;
+        }
+
+        private static bool ConditionalRotateEdge(Mesh mesh, int edgeIndex, Func<Node, Node, Node, Node, bool> predicate) {
+            var edge = mesh.Edges[edgeIndex];
+            var face0 = mesh.Faces[edge.Faces[0]];
+            var face1 = mesh.Faces[edge.Faces[1]];
+            var farNodeFaceIndex0 = GetFaceOppositeNodeIndex(face0, edge);
+            var farNodeFaceIndex1 = GetFaceOppositeNodeIndex(face1, edge);
+            var newNodeIndex0 = face0.Nodes[farNodeFaceIndex0];
+            var oldNodeIndex0 = face0.Nodes[(farNodeFaceIndex0 + 1)%3];
+            var newNodeIndex1 = face1.Nodes[farNodeFaceIndex1];
+            var oldNodeIndex1 = face1.Nodes[(farNodeFaceIndex1 + 1)%3];
+            var oldNode0 = mesh.Nodes[oldNodeIndex0];
+            var oldNode1 = mesh.Nodes[oldNodeIndex1];
+            var newNode0 = mesh.Nodes[newNodeIndex0];
+            var newNode1 = mesh.Nodes[newNodeIndex1];
+            var newEdgeIndex0 = face1.Edges[(farNodeFaceIndex1 + 2)%3];
+            var newEdgeIndex1 = face0.Edges[(farNodeFaceIndex0 + 2)%3];
+            var newEdge0 = mesh.Edges[newEdgeIndex0];
+            var newEdge1 = mesh.Edges[newEdgeIndex1];
+
+            if (!predicate(oldNode0, oldNode1, newNode0, newNode1)) {
+                return false;
+            }
+
+            oldNode0.Edges.RemoveAt(oldNode0.Edges.IndexOf(edgeIndex));
+            oldNode1.Edges.RemoveAt(oldNode1.Edges.IndexOf(edgeIndex));
+            newNode0.Edges.Add(edgeIndex);
+            newNode1.Edges.Add(edgeIndex);
+
+            edge.Nodes[0] = newNodeIndex0;
+            edge.Nodes[1] = newNodeIndex1;
+
+            newEdge0.Faces.RemoveAt(newEdge0.Faces.IndexOf(edge.Faces[1]));
+            newEdge1.Faces.RemoveAt(newEdge1.Faces.IndexOf(edge.Faces[0]));
+            newEdge0.Faces.Add(edge.Faces[0]);
+            newEdge1.Faces.Add(edge.Faces[1]);
+
+            oldNode0.Faces.RemoveAt(oldNode0.Faces.IndexOf(edge.Faces[1]));
+            oldNode1.Faces.RemoveAt(oldNode1.Faces.IndexOf(edge.Faces[0]));
+            newNode0.Faces.Add(edge.Faces[1]);
+            newNode1.Faces.Add(edge.Faces[0]);
+
+            face0.Nodes[(farNodeFaceIndex0 + 2)%3] = newNodeIndex1;
+            face1.Nodes[(farNodeFaceIndex1 + 2)%3] = newNodeIndex0;
+
+            face0.Edges[(farNodeFaceIndex0 + 1)%3] = newEdgeIndex0;
+            face1.Edges[(farNodeFaceIndex1 + 1)%3] = newEdgeIndex1;
+            face0.Edges[(farNodeFaceIndex0 + 2)%3] = edgeIndex;
+            face1.Edges[(farNodeFaceIndex1 + 2)%3] = edgeIndex;
+
+            return true;
+        }
+
+        private static int GetFaceOppositeNodeIndex(Face face, Edge edge) {
+            if (face.Nodes[0] != edge.Nodes[0] && face.Nodes[0] != edge.Nodes[1]) return 0;
+            if (face.Nodes[1] != edge.Nodes[0] && face.Nodes[1] != edge.Nodes[1]) return 1;
+            if (face.Nodes[2] != edge.Nodes[0] && face.Nodes[2] != edge.Nodes[1]) return 2;
+            throw new Exception("Cannot find node of given face that is not also a node of given edge");
+        }
+
+        private static bool RotationPredicate(Node old0, Node old1, Node new0, Node new1) {
+            if (new0.Faces.Count >= 7 || new1.Faces.Count >= 7 || old0.Faces.Count <= 5 || old1.Faces.Count <= 5) {
+                return false;
+            }
+
+            var oldEdgeLength = Vector3.Distance(old0.Position, old1.Position);
+            var newEdgeLength = Vector3.Distance(new0.Position, new1.Position);
+            var ratio = oldEdgeLength / newEdgeLength;
+            if (ratio >= 2 || ratio <= 0.5) {
+                return false;
+            }
+            var v0 = (old1.Position - old0.Position) / oldEdgeLength;
+            var v1 = Vector3.Normalize(new0.Position - old0.Position);
+            var v2 = Vector3.Normalize(new1.Position - old0.Position);
+            if (Vector3.Dot(v0, v1) < 0.2f || Vector3.Dot(v0, v2) < 0.2f) {
+                return false;
+            }
+            v0 = -v0;
+            var v3 = Vector3.Normalize(new0.Position - old1.Position);
+            var v4 = Vector3.Normalize(new1.Position - old1.Position);
+            if (Vector3.Dot(v0, v3) < 0.2f || Vector3.Dot(v0, v4) < 0.2f) {
+                return false;
+            }
+            return true;
+        }
+
+        private static Mesh GenerateSubdividedIcosahedron(int degree) {
             var icosahedron = GenerateIcosahedron();
 
-            var nodes = icosahedron.Nodes.Select(t => new Node {Position = t.Position}).ToList();
+            var nodes = icosahedron.Nodes.Select(t => new Node { Position = t.Position }).ToList();
 
             var edges = new List<Edge>();
             foreach (var edge in icosahedron.Edges) {
@@ -80,63 +195,55 @@ namespace PlanetGeneration {
                     var nodeIndex = nodes.Count;
                     edge.SubdividedEdges.Add(edgeIndex);
                     edge.SubdividedNodes.Add(nodeIndex);
-                    edges.Add(new Edge{ Nodes = new List<int>{priorNodeIndex, nodeIndex}});
+                    edges.Add(new Edge { Nodes = new List<int> { priorNodeIndex, nodeIndex } });
                     priorNodeIndex = nodeIndex;
-                    nodes.Add(new Node{ Position = VectorExtensions.Slerp(p0, p1, s/(float)degree), Edges = new List<int>{edgeIndex, edgeIndex+1}});
+                    nodes.Add(new Node { Position = VectorExtensions.Slerp(p0, p1, s / (float)degree), Edges = new List<int> { edgeIndex, edgeIndex + 1 } });
                 }
                 edge.SubdividedEdges.Add(edges.Count);
                 nodes[edge.Nodes[1]].Edges.Add(edges.Count);
-                edges.Add(new Edge{ Nodes = new List<int>{priorNodeIndex, edge.Nodes[1]}});
+                edges.Add(new Edge { Nodes = new List<int> { priorNodeIndex, edge.Nodes[1] } });
             }
             var faces = new List<Face>();
             foreach (var face in icosahedron.Faces) {
                 var edge0 = icosahedron.Edges[face.Edges[0]];
                 var edge1 = icosahedron.Edges[face.Edges[1]];
                 var edge2 = icosahedron.Edges[face.Edges[2]];
-                var point0 = icosahedron.Nodes[face.Nodes[0]].Position;
-                var point1 = icosahedron.Nodes[face.Nodes[1]].Position;
-                
-                var face1 = face;
-                IndexDelegate getEdgeNode0 = (k) => (face1.Nodes[0] == edge0.Nodes[0]) ? edge0.SubdividedNodes[k] : edge0.SubdividedNodes[degree - 2 - k];
-                var face2 = face;
-                IndexDelegate getEdgeNode1 = (k) => (face2.Nodes[1] == edge1.Nodes[0]) ? edge1.SubdividedNodes[k] : edge1.SubdividedNodes[degree - 2 - k];
-                var face3 = face;
-                IndexDelegate getEdgeNode2 = (k) => (face3.Nodes[0] == edge2.Nodes[0]) ? edge2.SubdividedNodes[k] : edge2.SubdividedNodes[degree - 2 - k];
 
-                var faceNodes = new List<int> {face.Nodes[0]};
+                IndexDelegate getEdgeNode0 = (k, f) => (f.Nodes[0] == edge0.Nodes[0]) ? edge0.SubdividedNodes[k] : edge0.SubdividedNodes[degree - 2 - k];
+                IndexDelegate getEdgeNode1 = (k, f) => (f.Nodes[1] == edge1.Nodes[0]) ? edge1.SubdividedNodes[k] : edge1.SubdividedNodes[degree - 2 - k];
+                IndexDelegate getEdgeNode2 = (k, f) => (f.Nodes[0] == edge2.Nodes[0]) ? edge2.SubdividedNodes[k] : edge2.SubdividedNodes[degree - 2 - k];
+
+                var faceNodes = new List<int> { face.Nodes[0] };
                 for (int j = 0; j < edge0.SubdividedNodes.Count; j++) {
-                    faceNodes.Add(getEdgeNode0(j));
+                    faceNodes.Add(getEdgeNode0(j, face));
                 }
                 faceNodes.Add(face.Nodes[1]);
 
                 for (int s = 1; s < degree; s++) {
-                    faceNodes.Add(getEdgeNode2(s-1));
-                    var p0 = nodes[getEdgeNode2(s - 1)].Position;
-                    var p1 = nodes[getEdgeNode1(s - 1)].Position;
-                    for (int t = 1; t < degree-s; t++) {
+                    faceNodes.Add(getEdgeNode2(s - 1, face));
+                    var p0 = nodes[getEdgeNode2(s - 1, face)].Position;
+                    var p1 = nodes[getEdgeNode1(s - 1, face)].Position;
+                    for (int t = 1; t < degree - s; t++) {
                         faceNodes.Add(nodes.Count);
-                        nodes.Add(new Node{Position = VectorExtensions.Slerp(p0, p1, t / (float)(degree-s))});
+                        nodes.Add(new Node { Position = VectorExtensions.Slerp(p0, p1, t / (float)(degree - s)) });
                     }
-                    faceNodes.Add(getEdgeNode1(s-1));
+                    faceNodes.Add(getEdgeNode1(s - 1, face));
                 }
                 faceNodes.Add(face.Nodes[2]);
 
-                var face4 = face;
-                IndexDelegate getEdgeEdge0 = (k) => face4.Nodes[0] == edge0.Nodes[0] ? edge0.SubdividedEdges[k] : edge0.SubdividedEdges[degree - 1 - k];
-                var face5 = face;
-                IndexDelegate getEdgeEdge1 = (k) => face5.Nodes[1] == edge1.Nodes[0] ? edge1.SubdividedEdges[k] : edge1.SubdividedEdges[degree - 1 - k];
-                var face6 = face;
-                IndexDelegate getEdgeEdge2 = (k) => face6.Nodes[0] == edge2.Nodes[0] ? edge2.SubdividedEdges[k] : edge2.SubdividedEdges[degree - 1 - k];
+                IndexDelegate getEdgeEdge0 = (k, f) => f.Nodes[0] == edge0.Nodes[0] ? edge0.SubdividedEdges[k] : edge0.SubdividedEdges[degree - 1 - k];
+                IndexDelegate getEdgeEdge1 = (k, f) => f.Nodes[1] == edge1.Nodes[0] ? edge1.SubdividedEdges[k] : edge1.SubdividedEdges[degree - 1 - k];
+                IndexDelegate getEdgeEdge2 = (k, f) => f.Nodes[0] == edge2.Nodes[0] ? edge2.SubdividedEdges[k] : edge2.SubdividedEdges[degree - 1 - k];
 
                 var faceEdges0 = new List<int>();
                 for (int j = 0; j < degree; j++) {
-                    faceEdges0.Add(getEdgeEdge0(j));
+                    faceEdges0.Add(getEdgeEdge0(j, face));
                 }
                 var nodeIndex = degree + 1;
                 for (int s = 1; s < degree; s++) {
-                    for (int t = 0; t < degree-s; t++) {
+                    for (int t = 0; t < degree - s; t++) {
                         faceEdges0.Add(edges.Count);
-                        var edge = new Edge {Nodes = new List<int> {faceNodes[nodeIndex], faceNodes[nodeIndex + 1]}};
+                        var edge = new Edge { Nodes = new List<int> { faceNodes[nodeIndex], faceNodes[nodeIndex + 1] } };
                         nodes[edge.Nodes[0]].Edges.Add(edges.Count);
                         nodes[edge.Nodes[1]].Edges.Add(edges.Count);
                         edges.Add(edge);
@@ -147,26 +254,26 @@ namespace PlanetGeneration {
 
                 var faceEdges1 = new List<int>();
                 nodeIndex = 1;
-                for (int s = 0; s < degree; s++) {
-                    for (int t = 1; t < degree - s; t++) {
+                for (var s = 0; s < degree; s++) {
+                    for (var t = 1; t < degree - s; t++) {
                         faceEdges1.Add(edges.Count);
-                        var edge = new Edge {Nodes = new List<int> {faceNodes[nodeIndex], faceNodes[nodeIndex + degree - s]}};
+                        var edge = new Edge { Nodes = new List<int> { faceNodes[nodeIndex], faceNodes[nodeIndex + degree - s] } };
                         nodes[edge.Nodes[0]].Edges.Add(edges.Count);
                         nodes[edge.Nodes[1]].Edges.Add(edges.Count);
                         edges.Add(edge);
                         ++nodeIndex;
                     }
-                    faceEdges1.Add(getEdgeEdge1(s));
+                    faceEdges1.Add(getEdgeEdge1(s, face));
                     nodeIndex += 2;
                 }
 
                 var faceEdges2 = new List<int>();
                 nodeIndex = 1;
-                for (int s = 0; s < degree; s++) {
-                    faceEdges2.Add(getEdgeEdge2(s));
-                    for (int t = 1; t < degree - s; t++) {
+                for (var s = 0; s < degree; s++) {
+                    faceEdges2.Add(getEdgeEdge2(s, face));
+                    for (var t = 1; t < degree - s; t++) {
                         faceEdges2.Add(edges.Count);
-                        var edge = new Edge {Nodes = new List<int> {faceNodes[nodeIndex], faceNodes[nodeIndex + degree - s + 1]}};
+                        var edge = new Edge { Nodes = new List<int> { faceNodes[nodeIndex], faceNodes[nodeIndex + degree - s + 1] } };
                         nodes[edge.Nodes[0]].Edges.Add(edges.Count);
                         nodes[edge.Nodes[1]].Edges.Add(edges.Count);
                         edges.Add(edge);
@@ -178,11 +285,11 @@ namespace PlanetGeneration {
                 nodeIndex = 0;
                 var edgeIndex = 0;
 
-                for (int s = 0; s < degree; s++) {
-                    for (int t = 1; t < degree - s + 1; t++) {
+                for (var s = 0; s < degree; s++) {
+                    for (var t = 1; t < degree - s + 1; t++) {
                         var subFace = new Face {
-                            Nodes = new List<int> {faceNodes[nodeIndex], faceNodes[nodeIndex + 1], faceNodes[nodeIndex + degree - s + 1]},
-                            Edges = new List<int> {faceEdges0[edgeIndex], faceEdges1[edgeIndex], faceEdges2[edgeIndex]}
+                            Nodes = new List<int> { faceNodes[nodeIndex], faceNodes[nodeIndex + 1], faceNodes[nodeIndex + degree - s + 1] },
+                            Edges = new List<int> { faceEdges0[edgeIndex], faceEdges1[edgeIndex], faceEdges2[edgeIndex] }
                         };
                         nodes[subFace.Nodes[0]].Faces.Add(faces.Count);
                         nodes[subFace.Nodes[1]].Faces.Add(faces.Count);
@@ -199,11 +306,11 @@ namespace PlanetGeneration {
 
                 nodeIndex = 1;
                 edgeIndex = 0;
-                for (int s = 1; s < degree; s++) {
-                    for (int t = 1; t < degree - s + 1; t++) {
+                for (var s = 1; s < degree; s++) {
+                    for (var t = 1; t < degree - s + 1; t++) {
                         var subFace = new Face {
-                            Nodes = new List<int> {faceNodes[nodeIndex], faceNodes[nodeIndex + degree - s + 2], faceNodes[nodeIndex + degree - s + 1]},
-                            Edges = new List<int> {faceEdges2[edgeIndex + 1], faceEdges0[edgeIndex + degree - s + 1], faceEdges1[edgeIndex]}
+                            Nodes = new List<int> { faceNodes[nodeIndex], faceNodes[nodeIndex + degree - s + 2], faceNodes[nodeIndex + degree - s + 1] },
+                            Edges = new List<int> { faceEdges2[edgeIndex + 1], faceEdges0[edgeIndex + degree - s + 1], faceEdges1[edgeIndex] }
                         };
                         nodes[subFace.Nodes[0]].Faces.Add(faces.Count);
                         nodes[subFace.Nodes[1]].Faces.Add(faces.Count);
@@ -219,15 +326,15 @@ namespace PlanetGeneration {
                     edgeIndex++;
                 }
             }
-            return new Icosahedron { Nodes = nodes, Edges = edges, Faces = faces };
+            return new Mesh { Nodes = nodes, Edges = edges, Faces = faces };
         }
 
-        private delegate int IndexDelegate(int k);
+        private delegate int IndexDelegate(int k, Face f);
 
-        private static Icosahedron GenerateIcosahedron() {
-            var phi = (1.0 + Math.Sqrt(5.0))/2.0;
-            var du = (float) (1.0/Math.Sqrt(phi*phi + 1.0));
-            var dv = (float) (phi*du);
+        private static Mesh GenerateIcosahedron() {
+            var phi = (1.0 + Math.Sqrt(5.0)) / 2.0;
+            var du = (float)(1.0 / Math.Sqrt(phi * phi + 1.0));
+            var dv = (float)(phi * du);
 
             var nodes = new List<Node> {
                 new Node {Position = new Vector3(0, dv, du)},
@@ -302,22 +409,22 @@ namespace PlanetGeneration {
                 new Face {Nodes = new List<int>{7,10,11}, Edges = new List<int>{26,29,27}},
             };
 
-            for (int i = 0; i < edges.Count; i++) {
-                for (int j = 0; j < edges[i].Nodes.Count; j++) {
+            for (var i = 0; i < edges.Count; i++) {
+                for (var j = 0; j < edges[i].Nodes.Count; j++) {
                     nodes[j].Edges.Add(i);
                 }
             }
-            for (int i = 0; i < faces.Count; i++) {
-                for (int j = 0; j < faces[i].Nodes.Count; j++) {
+            for (var i = 0; i < faces.Count; i++) {
+                for (var j = 0; j < faces[i].Nodes.Count; j++) {
                     nodes[j].Faces.Add(i);
                 }
             }
-            for (int i = 0; i < faces.Count; i++) {
-                for (int j = 0; j < faces[i].Edges.Count; j++) {
+            for (var i = 0; i < faces.Count; i++) {
+                for (var j = 0; j < faces[i].Edges.Count; j++) {
                     edges[j].Faces.Add(i);
                 }
             }
-            return new Icosahedron {
+            return new Mesh {
                 Nodes = nodes,
                 Edges = edges,
                 Faces = faces
@@ -325,37 +432,35 @@ namespace PlanetGeneration {
         }
     }
 
-    public class Icosahedron {
+    public class Mesh {
         public List<Node> Nodes { get; set; }
         public List<Edge> Edges { get; set; }
-        public List<Face> Faces { get; set; } 
+        public List<Face> Faces { get; set; }
     }
 
     public class Node {
         public Vector3 Position { get; set; }
         public List<int> Edges = new List<int>();
-        public readonly List<int> Faces = new List<int>(); 
+        public readonly List<int> Faces = new List<int>();
     }
 
     public class Edge {
-        public List<int> Nodes = new List<int>(); 
-        //public Node Node0 { get; set; }
-        //public Node Node1 { get; set; }
-        public readonly List<int> Faces = new List<int>(); 
+        public List<int> Nodes = new List<int>();
+        public readonly List<int> Faces = new List<int>();
 
         public readonly List<int> SubdividedNodes = new List<int>();
-        public readonly List<int> SubdividedEdges = new List<int>(); 
+        public readonly List<int> SubdividedEdges = new List<int>();
     }
 
     public class Face {
-        public List<int> Nodes = new List<int>(); 
+        public List<int> Nodes = new List<int>();
         public List<int> Edges = new List<int>();
     }
 
     public static class VectorExtensions {
         public static Vector3 Slerp(Vector3 v0, Vector3 v1, float t) {
             var omega = Math.Acos(Vector3.Dot(v0, v1));
-            return (v0*(float) Math.Sin((1 - t)*omega) + v1*(float) (Math.Sin(t*omega)))/(float) Math.Sin(omega);
+            return (v0 * (float)Math.Sin((1 - t) * omega) + v1 * (float)(Math.Sin(t * omega))) / (float)Math.Sin(omega);
         }
     }
 }
